@@ -6,4 +6,4 @@ python-multipart
 langchain
 langchain-core
 langchain-google-genai
-pydantic
+langchain-community
