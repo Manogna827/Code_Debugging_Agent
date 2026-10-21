@@ -17,9 +17,7 @@ from pydantic import BaseModel, Field
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
-    raise ValueError(
-        "GOOGLE_API_KEY environment variable is not set."
-    )
+    raise ValueError("GOOGLE_API_KEY environment variable is not set.")
 
 
 # ============================================================
@@ -66,10 +64,7 @@ def call_llm(prompt: str) -> str:
         return str(content)
 
     except Exception as e:
-        return (
-            "Gemma model call failed.\n"
-            f"Reason: {str(e)}"
-        )
+        return f"Gemma model call failed.\nReason: {str(e)}"
 
 
 # ============================================================
@@ -316,8 +311,7 @@ code: str = Field(
 error_message: str = Field(
     default="",
     description=(
-        "Compiler or runtime error message, "
-        "if available."
+        "Compiler or runtime error message, if available."
     )
 )
 
