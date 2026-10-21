@@ -4,10 +4,8 @@ import uvicorn
 from fastapi import FastAPI
 from langserve import add_routes
 
-from langchain_core.tools import tool
 from langchain_core.runnables import RunnableLambda
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.agents import create_agent
 
 from pydantic import BaseModel, Field
 
@@ -20,15 +18,15 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
     raise ValueError(
-        "GOOGLE_API_KEY is not set."
+        "GOOGLE_API_KEY environment variable is not set."
     )
 
 
 # ============================================================
-# 2. GEMMA AGENT CORE
+# 2. GEMMA MODEL
 # ============================================================
 
-llm_flash = ChatGoogleGenerativeAI(
+llm = ChatGoogleGenerativeAI(
     model="gemma-4-31b-it",
     google_api_key=GOOGLE_API_KEY,
     temperature=0
@@ -36,23 +34,58 @@ llm_flash = ChatGoogleGenerativeAI(
 
 
 # ============================================================
-# 3. CODE ANALYSIS TOOL
+# 3. SAFE LLM CALL
 # ============================================================
 
-@tool
-def code_analysis(
+def call_llm(prompt: str) -> str:
+    try:
+        response = llm.invoke(prompt)
+        content = response.content
+
+        if isinstance(content, str):
+            return content.strip()
+
+        if isinstance(content, list):
+            text_parts = []
+
+            for item in content:
+                if isinstance(item, str):
+                    text_parts.append(item)
+
+                elif isinstance(item, dict):
+                    text = item.get("text", "")
+
+                    if text:
+                        text_parts.append(text)
+
+            result = "\n".join(text_parts).strip()
+
+            if result:
+                return result
+
+        return str(content)
+
+    except Exception as e:
+        return (
+            "Gemma model call failed.\n"
+            f"Reason: {str(e)}"
+        )
+
+
+# ============================================================
+# 4. CODE ANALYSIS
+# ============================================================
+
+def analyze_code(
     programming_language: str,
     code: str,
     error_message: str
 ) -> str:
-    """
-    Analyze source code and identify syntax,
-    runtime and logical problems.
-    """
 
     prompt = f"""
+You are CodeFix AI, an expert programming debugger.
 
-You are an expert code analysis assistant.
+Analyze the following source code carefully.
 
 PROGRAMMING LANGUAGE:
 {programming_language}
@@ -61,11 +94,9 @@ SOURCE CODE:
 {code}
 
 ERROR MESSAGE:
-{error_message if error_message else "No error message provided."}
+{error_message if error_message else "No error message was provided."}
 
-Analyze the code carefully.
-
-Identify:
+Analyze the code for:
 
 1. Syntax errors
 2. Compilation errors
@@ -78,70 +109,44 @@ Identify:
 9. Exception risks
 10. Other important programming mistakes
 
-For every important problem explain:
+For every actual problem explain:
 
 - Problem
 - Location
-- Type of error
+- Error type
 - Why it happens
 - Severity
 
-IMPORTANT:
+IMPORTANT RULES:
 
-Do not invent errors.
+- Do not invent errors.
+- Carefully use the supplied error message.
+- If the code is correct, clearly say:
+  "No obvious bug was found in the provided code."
+- Do not claim that you executed or compiled the code.
+- Do not return JSON.
+- Return clear normal text.
 
-If the code is correct, clearly say that
-no obvious error was found.
-
-Do not claim that you executed the code.
-
-Return clear normal text.
-Do not return JSON.
+Return only the code analysis.
 """
 
-    try:
-
-        response = llm_flash.invoke(
-            prompt
-        )
-
-        content = response.content
-
-        if isinstance(
-            content,
-            str
-        ):
-
-            return content.strip()
-
-        return str(content)
-
-    except Exception as e:
-
-        return (
-            "Code analysis failed: "
-            + str(e)
-        )
+    return call_llm(prompt)
 
 
 # ============================================================
-# 4. CODE FIX TOOL
+# 5. CODE FIX
 # ============================================================
 
-@tool
-def code_fix(
+def fix_code(
     programming_language: str,
     code: str,
     analysis: str
 ) -> str:
-    """
-    Generate corrected code based on the
-    identified programming problems.
-    """
 
     prompt = f"""
+You are CodeFix AI, an expert programming mentor.
 
-You are an expert programming mentor.
+Create a corrected version of the following program.
 
 PROGRAMMING LANGUAGE:
 {programming_language}
@@ -152,74 +157,53 @@ ORIGINAL CODE:
 CODE ANALYSIS:
 {analysis}
 
-Create a corrected version of the code.
-
 Requirements:
 
 1. Preserve the original purpose.
-2. Fix the identified errors.
+2. Fix the actual errors identified.
 3. Do not unnecessarily rewrite the program.
 4. Use valid syntax for the specified language.
 5. Keep the code beginner-friendly.
-6. Do not invent functionality that was not requested.
+6. Do not add unrelated functionality.
 
-Return:
+Return exactly in this format:
 
 CORRECTED CODE:
-Provide the complete corrected source code.
+
+```{programming_language.lower()}
+<complete corrected source code>
 
 IMPORTANT:
 
-Do not claim that you executed or compiled the code.
+- Return the complete corrected source code.
 
-Return normal readable text.
-Do not return JSON.
-"""
+- Do not return an incomplete snippet.
 
-    try:
+- Do not claim that you executed or compiled the code.
 
-        response = llm_flash.invoke(
-            prompt
-        )
+- Do not return JSON.
+  """
+  
+  return call_llm(prompt)
 
-        content = response.content
+============================================================
 
-        if isinstance(
-            content,
-            str
-        ):
+6. CODE EXPLANATION
 
-            return content.strip()
+============================================================
 
-        return str(content)
-
-    except Exception as e:
-
-        return (
-            "Code fixing failed: "
-            + str(e)
-        )
-
-
-# ============================================================
-# 5. CODE EXPLANATION TOOL
-# ============================================================
-
-@tool
-def code_explanation(
-    programming_language: str,
-    original_code: str,
-    analysis: str,
-    corrected_code: str
+def explain_code(
+programming_language: str,
+original_code: str,
+analysis: str,
+corrected_code: str,
+user_question: str
 ) -> str:
-    """
-    Explain the identified bug and the changes
-    made in the corrected code.
-    """
 
-    prompt = f"""
+prompt = f"""
 
-You are a programming teacher helping a beginner.
+You are CodeFix AI, a programming teacher helping a
+college student understand programming errors.
 
 PROGRAMMING LANGUAGE:
 {programming_language}
@@ -233,67 +217,51 @@ BUG ANALYSIS:
 CORRECTED CODE:
 {corrected_code}
 
-Explain the solution in simple English.
+STUDENT QUESTION:
+{user_question if user_question else "No additional question was provided."}
+
+Explain the debugging result in simple English.
 
 Include:
 
 1. What was wrong
-2. Why the problem occurred
+2. Why the error occurred
 3. What was changed
 4. Why the correction works
 5. Important programming concept involved
 6. How the student can avoid this mistake
 
-Use beginner-friendly explanations.
+Answer the student's question directly.
 
-Do not claim that the code was executed.
+IMPORTANT:
 
-Return normal readable text.
-Do not return JSON.
-"""
+- Use beginner-friendly language.
 
-    try:
+- Do not claim that the code was executed.
 
-        response = llm_flash.invoke(
-            prompt
-        )
+- Do not return JSON.
 
-        content = response.content
+- Return normal readable text.
+  """
+  
+  return call_llm(prompt)
 
-        if isinstance(
-            content,
-            str
-        ):
+============================================================
 
-            return content.strip()
+7. CODE IMPROVEMENT
 
-        return str(content)
+============================================================
 
-    except Exception as e:
-
-        return (
-            "Code explanation failed: "
-            + str(e)
-        )
-
-
-# ============================================================
-# 6. CODE IMPROVEMENT TOOL
-# ============================================================
-
-@tool
-def code_improvement(
-    programming_language: str,
-    corrected_code: str
+def improve_code(
+programming_language: str,
+corrected_code: str
 ) -> str:
-    """
-    Suggest safe improvements for the corrected
-    code without changing its intended behavior.
-    """
 
-    prompt = f"""
+prompt = f"""
 
 You are a senior programming mentor.
+
+Review the corrected program below.
 
 PROGRAMMING LANGUAGE:
 {programming_language}
@@ -301,633 +269,323 @@ PROGRAMMING LANGUAGE:
 CORRECTED CODE:
 {corrected_code}
 
-Review the corrected code.
-
 Suggest practical improvements related to:
 
 1. Readability
 2. Code structure
 3. Error handling
-4. Naming
+4. Variable naming
 5. Performance
 6. Maintainability
-7. Beginner-friendly coding practices
+7. Beginner-friendly programming practices
 
-Only suggest improvements that are relevant.
+Only suggest improvements that are actually relevant.
 
-Do not unnecessarily complicate the code.
+Do not unnecessarily complicate the program.
 
-Return:
+If there are no important improvements, say:
 
-Improvement:
-Reason:
+"No major improvement is required for this code."
+
+Return normal readable text.
 
 Do not return JSON.
 """
 
-    try:
+return call_llm(prompt)
 
-        response = llm_flash.invoke(
-            prompt
-        )
+============================================================
 
-        content = response.content
+8. INPUT SCHEMA
 
-        if isinstance(
-            content,
-            str
-        ):
+============================================================
 
-            return content.strip()
+class AgentInput(BaseModel):
 
-        return str(content)
+programming_language: str = Field(
+    description=(
+        "Programming language such as Java, Python, "
+        "C, C++ or JavaScript."
+    )
+)
 
-    except Exception as e:
+code: str = Field(
+    description="Source code that needs debugging."
+)
 
-        return (
-            "Code improvement failed: "
-            + str(e)
-        )
+error_message: str = Field(
+    default="",
+    description=(
+        "Compiler or runtime error message, "
+        "if available."
+    )
+)
 
+user_question: str = Field(
+    default="",
+    description="Optional question from the student."
+)
 
-# ============================================================
-# 7. TOOLS AVAILABLE TO GEMMA
-# ============================================================
+============================================================
 
-tools = [
-    code_analysis,
-    code_fix,
-    code_explanation,
-    code_improvement
-]
+9. MAIN CODEFIX WORKFLOW
 
+============================================================
 
-# ============================================================
-# 8. CODEFIX AI AGENT
-# ============================================================
+def codefix_workflow(input_data) -> str:
 
-system_prompt = """
+if isinstance(input_data, dict):
 
-You are CodeFix AI, an intelligent
-Code Debugging Agent.
+    programming_language = input_data.get(
+        "programming_language",
+        ""
+    )
 
-Your purpose is to help students understand,
-debug and improve their programming code.
+    code = input_data.get(
+        "code",
+        ""
+    )
 
-The student provides:
+    error_message = input_data.get(
+        "error_message",
+        ""
+    )
 
-1. Programming Language
-2. Source Code
-3. Error Message
-4. Optional Question
+    user_question = input_data.get(
+        "user_question",
+        ""
+    )
 
+else:
 
-YOUR WORKFLOW:
+    programming_language = getattr(
+        input_data,
+        "programming_language",
+        ""
+    )
 
-STEP 1:
+    code = getattr(
+        input_data,
+        "code",
+        ""
+    )
 
-Use the Code Analysis tool to analyze the
-provided source code.
+    error_message = getattr(
+        input_data,
+        "error_message",
+        ""
+    )
 
-Identify syntax, compilation, runtime and
-logical problems.
+    user_question = getattr(
+        input_data,
+        "user_question",
+        ""
+    )
 
+# Validate input
 
-STEP 2:
+if not programming_language.strip():
+    return "Please provide the programming language."
 
-Use the Code Fix tool to generate a corrected
-version of the code based on the analysis.
+if not code.strip():
+    return "Please provide the source code."
 
+# ========================================================
+# STEP 1 - CODE ANALYSIS
+# ========================================================
 
-STEP 3:
+analysis = analyze_code(
+    programming_language,
+    code,
+    error_message
+)
 
-Use the Code Explanation tool to explain:
+# ========================================================
+# STEP 2 - CODE FIX
+# ========================================================
 
-- What went wrong
-- Why it happened
-- What was changed
-- Why the correction works
+corrected_code = fix_code(
+    programming_language,
+    code,
+    analysis
+)
 
+# ========================================================
+# STEP 3 - CODE EXPLANATION
+# ========================================================
 
-STEP 4:
+explanation = explain_code(
+    programming_language,
+    code,
+    analysis,
+    corrected_code,
+    user_question
+)
 
-Use the Code Improvement tool to provide
-useful recommendations for the corrected code.
+# ========================================================
+# STEP 4 - CODE IMPROVEMENT
+# ========================================================
 
+improvement = improve_code(
+    programming_language,
+    corrected_code
+)
 
-STEP 5:
+# ========================================================
+# STEP 5 - FINAL REPORT
+# ========================================================
 
-Combine all results and produce the final
-CodeFix AI Debugging Report.
-
-
-IMPORTANT:
-
-YOU ARE THE AGENT CORE.
-
-You must decide when a tool is required.
-
-Use the tools available to you.
-
-Follow the complete workflow.
-
-Do not invent errors.
-
-Do not claim that code was executed,
-compiled or tested unless an actual execution
-tool was used.
-
-Do not expose internal reasoning.
-
-Do not expose tool calls.
-
-Do not output JSON.
-
-Do not output Python dictionaries.
-
-
-FINAL RESPONSE FORMAT:
+final_report = f"""
 
 CODEFIX AI - DEBUGGING REPORT
 
 Programming Language:
-
-Code Summary:
-
-Bugs Found:
-
-Root Cause:
-
-Corrected Code:
-
-What Was Changed:
-
-Explanation:
-
-Code Improvement Suggestions:
-
-Prevention Tips:
-
-Final Verdict:
-
-
-The final response must be understandable
-to a college student.
-
-Use clear paragraphs and bullet points.
-
-If no bug is found, clearly state:
-
-"No obvious bug was found in the provided code."
-
-The final response must contain actual information
-obtained from the debugging tools.
-"""
-
-
-# ============================================================
-# 9. CREATE LANGCHAIN AGENT
-# ============================================================
-
-agent = create_agent(
-
-    model=llm_flash,
-
-    tools=tools,
-
-    system_prompt=system_prompt
-
-)
-
-
-# ============================================================
-# 10. INPUT SCHEMA
-# ============================================================
-
-class AgentInput(BaseModel):
-
-    programming_language: str = Field(
-        description=(
-            "Programming language of the code, "
-            "for example Java, Python, C, C++ "
-            "or JavaScript"
-        )
-    )
-
-    code: str = Field(
-        description=(
-            "Source code that needs debugging"
-        )
-    )
-
-    error_message: str = Field(
-        default="",
-        description=(
-            "Compiler or runtime error message, "
-            "if available"
-        )
-    )
-
-    user_question: str = Field(
-        default="",
-        description=(
-            "Optional question about the code"
-        )
-    )
-
-
-# ============================================================
-# 11. FORMAT INPUT FOR GEMMA AGENT
-# ============================================================
-
-def format_for_agent(x) -> dict:
-
-    if isinstance(
-        x,
-        dict
-    ):
-
-        programming_language = x.get(
-            "programming_language",
-            ""
-        )
-
-        code = x.get(
-            "code",
-            ""
-        )
-
-        error_message = x.get(
-            "error_message",
-            ""
-        )
-
-        user_question = x.get(
-            "user_question",
-            ""
-        )
-
-    else:
-
-        programming_language = getattr(
-            x,
-            "programming_language",
-            ""
-        )
-
-        code = getattr(
-            x,
-            "code",
-            ""
-        )
-
-        error_message = getattr(
-            x,
-            "error_message",
-            ""
-        )
-
-        user_question = getattr(
-            x,
-            "user_question",
-            ""
-        )
-
-
-    user_input = f"""
-
-CODEFIX AI INPUT
-
-==================================================
-PROGRAMMING LANGUAGE
-==================================================
-
 {programming_language}
 
+============================================================
+CODE SUMMARY
 
-==================================================
-SOURCE CODE
-==================================================
+CodeFix AI analyzed the provided source code and performed
+a complete debugging workflow consisting of code analysis,
+code correction, explanation and improvement suggestions.
 
-{code}
+============================================================
+BUGS FOUND
 
+{analysis}
 
-==================================================
-ERROR MESSAGE
-==================================================
+============================================================
+CORRECTED CODE
 
-{error_message if error_message else "No error message provided."}
+{corrected_code}
 
+============================================================
+WHAT WAS CHANGED
 
-==================================================
-USER QUESTION
-==================================================
+{explanation}
 
-{user_question if user_question else "No additional question provided."}
+============================================================
+CODE IMPROVEMENT SUGGESTIONS
 
+{improvement}
 
-==================================================
-TASK
-==================================================
+============================================================
+PREVENTION TIPS
 
-Debug this code.
+- Read compiler and runtime error messages carefully.
+- Check the exact line where an error occurs.
+- Validate variables before using them.
+- Handle possible exceptional situations.
+- Test different input values.
+- Understand the programming concept behind the error.
+- Avoid repeating the same coding mistake.
 
-You are the Agent Core.
+============================================================
+FINAL VERDICT
 
-Follow the complete workflow:
+CodeFix AI completed the debugging analysis and generated
+a corrected version with an explanation and improvement
+suggestions.
 
-Code Analysis
-        ↓
-Code Fix
-        ↓
-Code Explanation
-        ↓
-Code Improvement
-        ↓
-Final Debugging Report
-
-Return the final CodeFix AI report as readable text.
+IMPORTANT:
+The code was analyzed by AI but was NOT actually executed
+or compiled by CodeFix AI.
 """
 
+return final_report.strip()
 
-    return {
+============================================================
 
-        "messages": [
+10. LANGSERVE CHAIN
 
-            (
-                "user",
-                user_input
-            )
+============================================================
 
-        ]
-
-    }
-
-
-# ============================================================
-# 12. EXTRACT FINAL TEXT
-# ============================================================
-
-def extract_text_response(
-    agent_output
-) -> str:
-
-    if isinstance(
-        agent_output,
-        str
-    ):
-
-        return agent_output.strip()
-
-
-    if not isinstance(
-        agent_output,
-        dict
-    ):
-
-        return str(agent_output)
-
-
-    messages = agent_output.get(
-        "messages"
-    )
-
-
-    if messages is None:
-
-        for value in agent_output.values():
-
-            if (
-                isinstance(
-                    value,
-                    dict
-                )
-                and
-                "messages" in value
-            ):
-
-                messages = value[
-                    "messages"
-                ]
-
-                break
-
-
-    if not messages:
-
-        return (
-            "No final debugging report "
-            "was generated."
-        )
-
-
-    for message in reversed(
-        messages
-    ):
-
-        # Ignore tool messages
-        if message.__class__.__name__ != "AIMessage":
-
-            continue
-
-
-        content = getattr(
-            message,
-            "content",
-            ""
-        )
-
-
-        if isinstance(
-            content,
-            str
-        ):
-
-            text = content.strip()
-
-            if text:
-
-                return text
-
-
-        if isinstance(
-            content,
-            list
-        ):
-
-            text_parts = []
-
-
-            for item in content:
-
-                if isinstance(
-                    item,
-                    dict
-                ):
-
-                    item_type = item.get(
-                        "type",
-                        ""
-                    )
-
-
-                    # Ignore Gemini reasoning
-                    if item_type in {
-                        "thinking",
-                        "reasoning"
-                    }:
-
-                        continue
-
-
-                    if item_type in {
-                        "text",
-                        "output_text"
-                    }:
-
-                        text = item.get(
-                            "text",
-                            ""
-                        )
-
-                        if text:
-
-                            text_parts.append(
-                                text
-                            )
-
-                elif isinstance(
-                    item,
-                    str
-                ):
-
-                    text_parts.append(
-                        item
-                    )
-
-
-            final_text = "\n".join(
-                text_parts
-            ).strip()
-
-
-            if final_text:
-
-                return final_text
-
-
-    return (
-        "No final readable debugging "
-        "report was generated."
-    )
-
-
-# ============================================================
-# 13. LANGSERVE CHAIN
-# ============================================================
-
-formatted_agent_chain = (
-
-    RunnableLambda(
-        format_for_agent
-    )
-
-    | agent
-
-    | RunnableLambda(
-        extract_text_response
-    )
-
-).with_types(
-
-    input_type=AgentInput,
-
-    output_type=str
-
+codefix_chain = (
+RunnableLambda(codefix_workflow)
+.with_types(
+input_type=AgentInput,
+output_type=str
+)
 )
 
+============================================================
 
-# ============================================================
-# 14. FASTAPI APPLICATION
-# ============================================================
+11. FASTAPI APPLICATION
+
+============================================================
 
 app = FastAPI(
-
-    title=(
-        "CodeFix AI Agent API"
-    ),
-
-    version="1.0",
-
-    description=(
-        "CodeFix AI Agent using "
-        "LangChain, Gemma-4-31B-IT, "
-        "FastAPI and LangServe."
-    )
-
+title="CodeFix AI Agent API",
+version="2.0",
+description=(
+"AI-powered programming code debugging assistant "
+"using Gemma, LangChain, FastAPI and LangServe."
+)
 )
 
+============================================================
 
-# ============================================================
-# 15. LANGSERVE ROUTER
-# ============================================================
+12. LANGSERVE ROUTE
+
+============================================================
 
 add_routes(
-
-    app,
-
-    formatted_agent_chain,
-
-    path="/codefix-agent"
-
+app,
+codefix_chain,
+path="/codefix-agent"
 )
 
+============================================================
 
-# ============================================================
-# 16. HOME ENDPOINT
-# ============================================================
+13. HOME ENDPOINT
+
+============================================================
 
 @app.get("/")
 def home():
 
-    return {
+return {
+    "message": "CodeFix AI Agent is running.",
+    "agent_core": "gemma-4-31b-it",
+    "workflow": (
+        "Analysis -> Fix -> Explanation -> Improvement"
+    ),
+    "endpoint": "/codefix-agent",
+    "playground": "/codefix-agent/playground/"
+}
 
-        "message":
-            "CodeFix AI Agent is running.",
+============================================================
 
-        "agent_core":
-            "gemma-4-31b-it",
+14. HEALTH CHECK
 
-        "endpoint":
-            "/codefix-agent",
+============================================================
 
-        "playground":
-            "/codefix-agent/playground/"
+@app.get("/health")
+def health():
 
-    }
+return {
+    "status": "ok",
+    "service": "CodeFix AI",
+    "model": "gemma-4-31b-it"
+}
 
+============================================================
 
-# ============================================================
-# 17. RUN APPLICATION
-# ============================================================
+15. START SERVER
 
-if __name__ == "__main__":
+============================================================
 
-    port = int(
+if name == "main":
 
-        os.environ.get(
-            "PORT",
-            8000
-        )
-
+port = int(
+    os.environ.get(
+        "PORT",
+        8000
     )
+)
 
-    uvicorn.run(
-
-        "app:app",
-
-        host="0.0.0.0",
-
-        port=port
-
-      )
+uvicorn.run(
+    "app:app",
+    host="0.0.0.0",
+    port=port
+)
