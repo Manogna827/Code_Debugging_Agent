@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+langserve[server]
+sse-starlette
+python-multipart
+langchain
+langchain-google-genai
+langchain-community
