@@ -36,98 +36,17 @@ llm_flash = ChatGoogleGenerativeAI(
 
 
 # ============================================================
-# 3. CODE ANALYSIS TOOL
+# 3. CODE DEBUGGING TOOL
 # ============================================================
 
 @tool
-def code_analysis(
+def debug_code(
     code: str,
-    error_message: str,
     programming_language: str
 ) -> str:
     """
-    Analyze the provided code and identify
-    syntax errors, logical errors and runtime errors.
-    """
-
-    prompt = f"""
-
-You are an expert programming code debugger.
-
-PROGRAMMING LANGUAGE:
-{programming_language}
-
-CODE:
-{code}
-
-ERROR MESSAGE:
-{error_message}
-
-Analyze the code carefully.
-
-Identify:
-
-1. Syntax errors
-2. Runtime errors
-3. Logical errors
-4. Incorrect imports
-5. Incorrect variables or functions
-6. Missing code
-7. Incorrect indentation
-8. Problems related to the given error message
-
-IMPORTANT:
-
-Only identify problems that are actually supported
-by the provided code and error.
-
-Do not invent errors.
-
-Explain the problems in simple language.
-
-Return normal readable text.
-Do not return JSON.
-"""
-
-    try:
-
-        response = llm_flash.invoke(
-            prompt
-        )
-
-        content = response.content
-
-        if isinstance(
-            content,
-            str
-        ):
-
-            return content.strip()
-
-        return str(content)
-
-    except Exception as e:
-
-        return (
-            "Code analysis failed: "
-            + str(e)
-        )
-
-
-# ============================================================
-# 4. CODE FIX TOOL
-# ============================================================
-
-@tool
-def code_fix(
-    code: str,
-    error_message: str,
-    analysis: str,
-    programming_language: str
-) -> str:
-    """
-    Generate a corrected version of the
-    student's code.
+    Analyze code and identify the error,
+    its location, reason and corrected code.
     """
 
     prompt = f"""
@@ -137,103 +56,47 @@ You are an expert programming debugger.
 PROGRAMMING LANGUAGE:
 {programming_language}
 
-ORIGINAL CODE:
+SOURCE CODE:
 {code}
 
-ERROR MESSAGE:
-{error_message}
+Analyze the code carefully.
 
-CODE ANALYSIS:
-{analysis}
+Find the actual programming error or errors.
 
-Fix the code.
+Return ONLY the following four sections:
 
-IMPORTANT RULES:
+1. WHAT THE ERROR IS
+2. WHERE THE ERROR IS
+3. WHY IT HAPPENS
+4. CORRECTED CODE
 
-1. Preserve the original functionality.
-2. Fix the actual errors.
-3. Do not unnecessarily rewrite the entire program.
-4. Do not introduce new libraries unless necessary.
-5. Make sure indentation is correct.
-6. Make sure syntax is valid.
-7. Make sure variables and functions are used correctly.
-8. Make sure the corrected code can run.
-9. Do not invent missing requirements.
-10. Do not add explanations inside the code.
+Rules:
 
-Return ONLY the complete corrected code.
+- Identify syntax errors.
+- Identify runtime errors.
+- Identify logical errors when clearly present.
+- Mention the exact line or code statement where possible.
+- Explain the reason in simple English.
+- Provide the complete corrected code.
+- Do not invent errors.
+- Do not add unnecessary information.
+- Do not return JSON.
+- Do not return Python dictionaries.
+- Do not use Markdown code fences.
 
-Do not use Markdown code fences.
-Do not return JSON.
-"""
+If the code has no major error, say:
 
-    try:
+WHAT THE ERROR IS:
+No major error was found.
 
-        response = llm_flash.invoke(
-            prompt
-        )
+WHERE THE ERROR IS:
+No error location.
 
-        content = response.content
-
-        if isinstance(
-            content,
-            str
-        ):
-
-            return content.strip()
-
-        return str(content)
-
-    except Exception as e:
-
-        return (
-            "Code fixing failed: "
-            + str(e)
-        )
-
-
-# ============================================================
-# 5. DEBUGGING EXPLANATION TOOL
-# ============================================================
-
-@tool
-def debugging_explanation(
-    original_code: str,
-    corrected_code: str,
-    error_message: str
-) -> str:
-    """
-    Explain what was wrong with the original code
-    and what was changed.
-    """
-
-    prompt = f"""
-
-You are a programming instructor.
-
-ORIGINAL CODE:
-{original_code}
-
-ERROR MESSAGE:
-{error_message}
+WHY IT HAPPENS:
+The code appears to be correct.
 
 CORRECTED CODE:
-{corrected_code}
-
-Explain the debugging process.
-
-Provide:
-
-1. What caused the error
-2. Why the error occurred
-3. What was changed
-4. Why the corrected code works
-5. How the student can avoid this error
-
-Use simple English suitable for a college student.
-
-Do not return JSON.
-Return normal readable text.
+Return the original code.
 """
 
     try:
@@ -256,69 +119,50 @@ Return normal readable text.
     except Exception as e:
 
         return (
-            "Debugging explanation failed: "
+            "Code debugging failed: "
             + str(e)
         )
 
 
 # ============================================================
-# 6. TOOLS AVAILABLE TO GEMMA
+# 4. TOOLS AVAILABLE TO GEMMA
 # ============================================================
 
 tools = [
-    code_analysis,
-    code_fix,
-    debugging_explanation
+    debug_code
 ]
 
 
 # ============================================================
-# 7. CODE DEBUGGING AGENT
+# 5. CODE DEBUGGING AGENT
 # ============================================================
 
 system_prompt = """
 
 You are a Code Debugging AI Agent.
 
-Your purpose is to help students find and fix
-programming errors.
+Your job is to debug programming code.
 
-The student provides:
+The student provides only:
 
 1. Programming Language
 2. Source Code
-3. Error Message
 
+You must automatically analyze the code.
 
-YOUR WORKFLOW:
+Use the debugging tool when necessary.
 
-STEP 1:
-Analyze the provided code and error using the
-Code Analysis tool.
+Your final answer MUST contain exactly these four sections:
 
-STEP 2:
-Use the Code Fix tool to generate the corrected code.
+WHAT THE ERROR IS:
 
-STEP 3:
-Use the Debugging Explanation tool to explain
-the problem and solution.
+WHERE THE ERROR IS:
 
-STEP 4:
-Combine everything into a final debugging report.
+WHY IT HAPPENS:
 
+CORRECTED CODE:
 
-IMPORTANT:
-
-YOU ARE THE AGENT CORE.
-
-You must decide when a tool is required.
-
-Use the tools available to you.
-
-Do not invent information.
-
-Do not assume that a tool was successful if
-it returned an error.
+Do not ask the student for an error message.
 
 Do not expose internal reasoning.
 
@@ -328,37 +172,16 @@ Do not output JSON.
 
 Do not output Python dictionaries.
 
+Do not add unnecessary sections.
 
-FINAL RESPONSE FORMAT:
+Use simple English suitable for a college student.
 
-CODE DEBUGGING REPORT
-
-Programming Language:
-
-Error:
-
-Problem Identified:
-
-Corrected Code:
-
-Explanation:
-
-How to Avoid This Error:
-
-
-The final response must be understandable
-to a college student.
-
-The Corrected Code must contain the complete
-corrected program.
-
-Do not use Markdown code fences around the
-corrected code.
+The corrected code must be complete and runnable.
 """
 
 
 # ============================================================
-# 8. CREATE LANGCHAIN AGENT
+# 6. CREATE LANGCHAIN AGENT
 # ============================================================
 
 agent = create_agent(
@@ -373,7 +196,7 @@ agent = create_agent(
 
 
 # ============================================================
-# 9. INPUT SCHEMA
+# 7. INPUT SCHEMA
 # ============================================================
 
 class AgentInput(BaseModel):
@@ -387,20 +210,13 @@ class AgentInput(BaseModel):
 
     code: str = Field(
         description=(
-            "The complete source code that needs debugging"
-        )
-    )
-
-    error_message: str = Field(
-        description=(
-            "Compiler error, runtime error, or "
-            "description of the problem"
+            "Complete source code that needs debugging"
         )
     )
 
 
 # ============================================================
-# 10. FORMAT INPUT FOR GEMMA AGENT
+# 8. FORMAT INPUT FOR GEMMA AGENT
 # ============================================================
 
 def format_for_agent(x) -> dict:
@@ -417,11 +233,6 @@ def format_for_agent(x) -> dict:
             ""
         )
 
-        error_message = x.get(
-            "error_message",
-            ""
-        )
-
     else:
 
         programming_language = getattr(
@@ -433,12 +244,6 @@ def format_for_agent(x) -> dict:
         code = getattr(
             x,
             "code",
-            ""
-        )
-
-        error_message = getattr(
-            x,
-            "error_message",
             ""
         )
 
@@ -462,33 +267,19 @@ SOURCE CODE
 
 
 ==================================================
-ERROR MESSAGE
-==================================================
-
-{error_message}
-
-
-==================================================
 TASK
 ==================================================
 
-Debug this code.
+Analyze and debug this code.
 
-You are the Agent Core.
+Return exactly:
 
-Select and use the appropriate tools.
+1. What the error is
+2. Where the error is
+3. Why it happens
+4. Corrected code
 
-Follow the complete workflow:
-
-Code Analysis
-        ↓
-Code Fix
-        ↓
-Debugging Explanation
-        ↓
-Final Debugging Report
-
-Return the final debugging report as readable text.
+Do not ask for an error message.
 """
 
 
@@ -507,7 +298,7 @@ Return the final debugging report as readable text.
 
 
 # ============================================================
-# 11. EXTRACT FINAL TEXT
+# 9. EXTRACT FINAL TEXT
 # ============================================================
 
 def extract_text_response(
@@ -558,8 +349,7 @@ def extract_text_response(
     if not messages:
 
         return (
-            "No final debugging report "
-            "was generated."
+            "No debugging result was generated."
         )
 
 
@@ -567,7 +357,6 @@ def extract_text_response(
         messages
     ):
 
-        # Ignore tool messages
         if message.__class__.__name__ != "AIMessage":
 
             continue
@@ -613,7 +402,6 @@ def extract_text_response(
                     )
 
 
-                    # Remove Gemini thinking/reasoning
                     if item_type in {
                         "thinking",
                         "reasoning"
@@ -659,13 +447,13 @@ def extract_text_response(
 
 
     return (
-        "No final readable debugging "
-        "report was generated."
+        "No readable debugging result "
+        "was generated."
     )
 
 
 # ============================================================
-# 12. LANGSERVE CHAIN
+# 10. LANGSERVE CHAIN
 # ============================================================
 
 formatted_agent_chain = (
@@ -690,7 +478,7 @@ formatted_agent_chain = (
 
 
 # ============================================================
-# 13. FASTAPI APPLICATION
+# 11. FASTAPI APPLICATION
 # ============================================================
 
 app = FastAPI(
@@ -702,7 +490,7 @@ app = FastAPI(
     version="1.0",
 
     description=(
-        "Code Debugging AI Agent using "
+        "Simple Code Debugging AI Agent using "
         "LangChain, Gemma-4-31B-IT, "
         "FastAPI and LangServe."
     )
@@ -711,7 +499,7 @@ app = FastAPI(
 
 
 # ============================================================
-# 14. LANGSERVE ROUTER
+# 12. LANGSERVE ROUTER
 # ============================================================
 
 add_routes(
@@ -726,7 +514,7 @@ add_routes(
 
 
 # ============================================================
-# 15. HOME ENDPOINT
+# 13. HOME ENDPOINT
 # ============================================================
 
 @app.get("/")
@@ -750,7 +538,7 @@ def home():
 
 
 # ============================================================
-# 16. RUN APPLICATION
+# 14. RUN APPLICATION
 # ============================================================
 
 if __name__ == "__main__":
@@ -772,4 +560,4 @@ if __name__ == "__main__":
 
         port=port
 
-)
+    )
